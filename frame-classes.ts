@@ -11,6 +11,11 @@ export interface Comment {
     text: string;
 }
 
+export interface UniversalFileIdentifier {
+    ownerId: string;
+    id: string;
+}
+
 export interface Frame {
     name: string;
     body: Buffer;

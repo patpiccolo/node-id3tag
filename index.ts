@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as iconv from 'iconv-lite';
-import { Chapter, Comment, Frame, TagVersion } from './frame-classes';
+import { Chapter, Comment, UniversalFileIdentifier, Frame, TagVersion } from './frame-classes';
 import { ID3v23Frames, ID3v24Frames, LegacyFramesRemapped } from './frame-definitions';
 
 /*
@@ -51,6 +51,11 @@ export class NodeID3 {
             name: 'COMM',
             create: this.createCommentFrame.bind(this),
             read: this.readCommentFrame.bind(this),
+        },
+        uniquefileidentifier: {
+            name: 'UFID',
+            create: this.createUniqueFileIdentifierFrame.bind(this),
+            read: this.readUniqueFileIdentifierFrame.bind(this),
         },
         image: {
             name: 'APIC',
@@ -853,6 +858,60 @@ export class NodeID3 {
         return terminated
                 ? Buffer.concat([textBuffer, Buffer.alloc(this.getTerminationCount(encoding)).fill(0x00)])
                 : textBuffer;
+    }
+
+    public createUniqueFileIdentifierFrame(ufid: UniversalFileIdentifier) {
+        if (!ufid.ownerId || ! ufid.id) {
+            return null;
+        }
+
+        // Create frame header
+        const buffer = Buffer.alloc(10);
+        buffer.fill(0);
+        buffer.write('UFID', 0); //  Write header ID
+
+        const encoding = this.getEncodingByte('utf8');
+        const encodingBuffer = this.createTextEncoding(encoding);
+        const ownerIdBuffer = this.createContentDescriptor(ufid.ownerId, encoding, true);
+        const idBuffer = this.createText(ufid.id, encoding, false);
+
+        buffer.writeUInt32BE(
+            encodingBuffer.length  + ownerIdBuffer.length + idBuffer.length, 4);
+        return Buffer.concat([buffer, encodingBuffer, ownerIdBuffer, idBuffer]);
+    }
+
+    public readUniqueFileIdentifierFrame(frame: Buffer) {
+        let tags = {};
+
+        if (!frame) {
+            return tags;
+        }
+        const encoding = this.getEncodingName(frame[0]);
+        if (encoding === 'ISO-8859-1' || encoding === 'utf8') {
+            tags = {
+                ownerId: iconv.decode(frame, encoding).substring(1, frame.indexOf(0x00, 1)).replace(/\0/g, ''),
+                id: iconv.decode(frame, encoding).substring(frame.indexOf(0x00, 1) + 1).replace(/\0/g, ''),
+            };
+        } else if (encoding === 'utf16' || encoding === 'UTF-16BE') {
+            // TODO: Test UTF-16BE!
+            let descriptorEscape = 0;
+            while (frame[descriptorEscape] !== undefined && frame[descriptorEscape] !== 0x00 ||
+                    frame[descriptorEscape + 1] !== 0x00 || frame[descriptorEscape + 2] === 0x00) {
+                descriptorEscape++;
+            }
+            if (frame[descriptorEscape] === undefined) {
+                return tags;
+            }
+            const ownerId = frame.slice(1, descriptorEscape);
+            const id = frame.slice(descriptorEscape + 2);
+
+            tags = {
+                ownerId: iconv.decode(ownerId, encoding).replace(/\0/g, ''),
+                id: iconv.decode(id, encoding).replace(/\0/g, ''),
+            };
+        }
+
+        return tags;
     }
 
     public createCommentFrame(comment: Comment) {
